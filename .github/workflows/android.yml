@@ -1,34 +1,125 @@
-name: Android CI
+name: Build APK with GSI Editor Binaries
 
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
   workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+    paths-ignore:
+      - '**.md'
+
+permissions:
+  contents: write
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: gradle
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Build with Gradle
-      run: ./gradlew assembleMiniDebug
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-    - name: Archive artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: outputs-apk-minidebug
-        path: app/build/outputs/apk/miniDebug
+      - name: Ensure assets/bin directory exists
+        run: mkdir -p app/src/main/assets/bin
+
+      - name: Fetch e2fsprogs binaries (e2fsck, resize2fs, debugfs, mke2fs)
+        run: |
+          cd app/src/main/assets/bin
+          for bin in e2fsck resize2fs debugfs mke2fs; do
+            if [ ! -s "$bin" ]; then
+              echo "Fetching $bin..."
+              curl -fsSL "https://github.com/nicowillis/e2fsprogs-static/releases/latest/download/${bin}-arm64" -o "$bin" || echo "WARN: $bin download failed, continuing"
+              if [ -s "$bin" ]; then chmod +x "$bin"; fi
+            else
+              echo "$bin already present, skipping"
+            fi
+          done
+
+      - name: Fetch android-tools binaries (simg2img, img2simg)
+        run: |
+          cd app/src/main/assets/bin
+          for bin in simg2img img2simg; do
+            if [ ! -s "$bin" ]; then
+              echo "Fetching $bin..."
+              curl -fsSL "https://github.com/nmeum/android-tools/releases/latest/download/${bin}-aarch64" -o "$bin" || echo "WARN: $bin download failed, continuing"
+              if [ -s "$bin" ]; then chmod +x "$bin"; fi
+            else
+              echo "$bin already present, skipping"
+            fi
+          done
+
+      - name: Fetch lz4 binary
+        run: |
+          cd app/src/main/assets/bin
+          if [ ! -s "lz4" ]; then
+            echo "Fetching lz4..."
+            curl -fsSL "https://github.com/lz4/lz4/releases/latest/download/lz4-arm64-android" -o lz4 || echo "WARN: lz4 download failed, continuing"
+            if [ -s "lz4" ]; then chmod +x lz4; fi
+          else
+            echo "lz4 already present, skipping"
+          fi
+
+      - name: Extract magiskboot from Magisk APK
+        run: |
+          cd app/src/main/assets/bin
+          if [ ! -s "magiskboot" ]; then
+            echo "Fetching Magisk APK to extract magiskboot..."
+            curl -fsSL "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk.apk" -o /tmp/magisk.apk || echo "WARN: Magisk APK download failed"
+            if [ -f /tmp/magisk.apk ]; then
+              unzip -p /tmp/magisk.apk lib/arm64-v8a/libmagiskboot.so > magiskboot 2>/dev/null || echo "WARN: magiskboot extraction failed"
+              if [ -s "magiskboot" ]; then chmod +x magiskboot; fi
+              rm -f /tmp/magisk.apk
+            fi
+          else
+            echo "magiskboot already present, skipping"
+          fi
+
+      - name: List bundled binaries
+        run: ls -lh app/src/main/assets/bin/ || echo "No binaries directory found"
+
+      - name: Commit binaries to repo (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/bin/
+          git diff --cached --quiet || git commit -m "chore: update GSI Editor native binaries [skip ci]"
+          git push || echo "Nothing to push or push failed, continuing build anyway"
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Find generated APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found APK at: $APK_PATH"
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsu-neko-loader-debug-apk
+          path: ${{ steps.find_apk.outputs.apk_path }}
+          retention-days: 14
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            app/build/outputs/logs/
+            app/build/reports/
+          retention-days: 7
