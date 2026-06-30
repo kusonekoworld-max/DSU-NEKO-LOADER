@@ -30,6 +30,7 @@ import vegabobo.dsusideloader.ui.cards.warnings.UnlockedBootloaderCard
 import vegabobo.dsusideloader.ui.cards.warnings.UnsupportedCard
 import vegabobo.dsusideloader.ui.components.ApplicationScreen
 import vegabobo.dsusideloader.ui.components.TopBar
+import vegabobo.dsusideloader.ui.gsiEditor.GsiEditorEntryCard
 import vegabobo.dsusideloader.ui.screen.Destinations
 import vegabobo.dsusideloader.ui.sdialogs.CancelSheet
 import vegabobo.dsusideloader.ui.sdialogs.ConfirmInstallationSheet
@@ -140,6 +141,9 @@ fun Home(
                 DsuInfoCard(
                     onClickViewDocs = { uriHandler.openUri(HomeLinks.DSU_DOCS) },
                     onClickLearnMore = { uriHandler.openUri(HomeLinks.DSU_LEARN_MORE) },
+                )
+                GsiEditorEntryCard(
+                    onClick = { navigate(Destinations.GsiEditor) },
                 )
             }
         },
