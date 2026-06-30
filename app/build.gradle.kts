@@ -104,6 +104,17 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    androidResources {
+        noCompress += listOf(
+            "bin/simg2img", "bin/img2simg", "bin/e2fsck",
+            "bin/resize2fs", "bin/debugfs", "bin/mke2fs",
+            "bin/lz4", "bin/magiskboot"
+        )
     }
 }
 
