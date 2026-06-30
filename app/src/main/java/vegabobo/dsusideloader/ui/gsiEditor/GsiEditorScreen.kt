@@ -1,14 +1,19 @@
+
 package vegabobo.dsusideloader.ui.gsiEditor
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -20,6 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import vegabobo.dsusideloader.domain.gsieditor.GsiRepackUseCase
 import vegabobo.dsusideloader.ui.screen.Destinations
 import vegabobo.dsusideloader.util.StorageHelper
 import java.io.File
@@ -33,10 +39,26 @@ fun GsiEditorScreen(
     val uiState by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else true
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            hasStoragePermission = Environment.isExternalStorageManager()
+        }
+    }
+
+    // File picker launcher
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
+            // Resolve URI to File path
             val path = uri.path?.replace("/document/primary:", "/storage/emulated/0/") ?: return@let
             vm.onImagePicked(File(path))
         }
@@ -67,53 +89,99 @@ fun GsiEditorScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            StepIndicator(currentStep = uiState.currentStep)
+            if (!hasStoragePermission) {
+                StoragePermissionRequiredSection(
+                    onRequestPermission = {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                        context.startActivity(intent)
+                    }
+                )
+            } else {
+                // Step indicator
+                StepIndicator(currentStep = uiState.currentStep)
 
-            uiState.errorMessage?.let { err ->
-                Surface(
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                // Error banner
+                uiState.errorMessage?.let { err ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.onErrorContainer)
-                        Spacer(Modifier.width(8.dp))
-                        Text(err, color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.weight(1f))
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                            Spacer(Modifier.width(8.dp))
+                            Text(err, color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f))
+                        }
                     }
                 }
-            }
 
-            when (uiState.currentStep) {
-                EditorStep.PICK_IMAGE -> PickImageSection(
-                    onPickFile = { filePicker.launch("*/*") }
-                )
-                EditorStep.UNPACK -> UnpackSection(
-                    uiState = uiState,
-                    onStartUnpack = vm::startUnpack
-                )
-                EditorStep.EDIT -> EditSection(
-                    uiState = uiState,
-                    vm = vm
-                )
-                EditorStep.REPACK -> RepackSection(
-                    uiState = uiState,
-                    vm = vm
-                )
-                EditorStep.DONE -> DoneSection(
-                    uiState = uiState,
-                    onStartOver = vm::cleanup
-                )
-            }
+                // Main content per step
+                when (uiState.currentStep) {
+                    EditorStep.PICK_IMAGE -> PickImageSection(
+                        onPickFile = { filePicker.launch("*/*") }
+                    )
+                    EditorStep.UNPACK -> UnpackSection(
+                        uiState = uiState,
+                        onStartUnpack = vm::startUnpack
+                    )
+                    EditorStep.EDIT -> EditSection(
+                        uiState = uiState,
+                        vm = vm
+                    )
+                    EditorStep.REPACK -> RepackSection(
+                        uiState = uiState,
+                        vm = vm
+                    )
+                    EditorStep.DONE -> DoneSection(
+                        uiState = uiState,
+                        onStartOver = vm::cleanup
+                    )
+                }
 
-            if (uiState.logLines.isNotEmpty()) {
-                LogPanel(logLines = uiState.logLines)
+                // Log panel (always visible when there are logs)
+                if (uiState.logLines.isNotEmpty()) {
+                    LogPanel(logLines = uiState.logLines)
+                }
             }
         }
     }
 }
+
+@Composable
+private fun StoragePermissionRequiredSection(onRequestPermission: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+Icon(
+            Icons.Default.FolderOff,
+            contentDescription = null,
+            modifier = Modifier.size(72.dp),
+            tint = MaterialTheme.colorScheme.error
+        )
+        Text("Storage Access Diperlukan", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "GSI Editor butuh akses penuh ke storage untuk menyimpan hasil repack " +
+            "ke /storage/emulated/0/DSUSideloader/output/",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(onClick = onRequestPermission, modifier = Modifier.fillMaxWidth()) {
+            Text("Buka Pengaturan Izin")
+        }
+    }
+}
+
+// ─── Pick Image ──────────────────────────────────────────────────────────────
 
 @Composable
 private fun PickImageSection(onPickFile: () -> Unit) {
@@ -143,6 +211,8 @@ private fun PickImageSection(onPickFile: () -> Unit) {
         }
     }
 }
+
+// ─── Unpack Section ──────────────────────────────────────────────────────────
 
 @Composable
 private fun UnpackSection(
@@ -180,6 +250,8 @@ private fun UnpackSection(
     }
 }
 
+// ─── Edit Section ────────────────────────────────────────────────────────────
+
 @Composable
 private fun EditSection(
     uiState: GsiEditorUiState,
@@ -206,12 +278,15 @@ private fun EditSection(
     }
 }
 
+// ─── File Browser Tab ────────────────────────────────────────────────────────
+
 @Composable
 private fun FileBrowserTab(
     uiState: GsiEditorUiState,
     vm: GsiEditorViewModel
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
+        // Path bar
         Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
             Row(
                 modifier = Modifier
@@ -225,6 +300,7 @@ private fun FileBrowserTab(
                 ) { Icon(Icons.Default.ArrowUpward, "Up") }
                 Text(
                     uiState.currentBrowsePath,
+                    style    = MaterialTheme.typography.bodyMedium,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.weight(1f)
                 )
@@ -245,53 +321,15 @@ private fun FileBrowserTab(
         } else {
             LazyColumn {
                 items(uiState.fileEntries) { entry ->
-                    var showConfirm by remember { mutableStateOf(false) }
-                    ListItem(
-                        headlineContent = {
-                            Text(entry.name, fontFamily = FontFamily.Monospace)
+                    FileEntryRow(
+                        entry     = entry,
+                        onClick   = {
+                            if (entry.isDirectory)
+                                vm.browseDirectory(entry.path)
                         },
-                        supportingContent = {
-                            Text("${entry.permissions}  ${if (!entry.isDirectory) StorageHelper.formatSize(entry.size) else ""}",
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        },
-                        leadingContent = {
-                            Icon(
-                                if (entry.isDirectory) Icons.Default.Folder
-                                else Icons.Default.InsertDriveFile,
-                                null,
-                                tint = if (entry.isDirectory)
-                                    MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        trailingContent = {
-                            IconButton(onClick = { showConfirm = true }) {
-                                Icon(Icons.Default.Delete, null,
-                                    tint = MaterialTheme.colorScheme.error)
-                            }
-                        },
-                        modifier = Modifier.clickable {
-                            if (entry.isDirectory) vm.browseDirectory(entry.path)
-                        }
+                        onDelete  = { vm.deleteFile(entry) }
                     )
                     HorizontalDivider()
-                    if (showConfirm) {
-                        AlertDialog(
-                            onDismissRequest = { showConfirm = false },
-                            title = { Text("Delete ${entry.name}?") },
-                            text  = { Text("This cannot be undone.") },
-                            confirmButton = {
-                                TextButton(onClick = { vm.deleteFile(entry); showConfirm = false }) {
-                                    Text("Delete")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
-                            }
-                        )
-                    }
                 }
             }
         }
@@ -299,66 +337,100 @@ private fun FileBrowserTab(
 }
 
 @Composable
-private fun BuildPropTab(uiState: GsiEditorUiState, vm: GsiEditorViewModel) {
+private fun FileEntryRow(
+    entry: GsiFileEntry,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+
+    ListItem(
+        headlineContent = { Text(entry.name, fontFamily = FontFamily.Monospace) },
+        supportingContent = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(entry.permissions, style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!entry.isDirectory)
+                    Text(StorageHelper.formatSize(entry.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        leadingContent = {
+            Icon(
+                if (entry.isDirectory) Icons.Default.Folder
+                else Icons.Default.InsertDriveFile,
+                null,
+                tint = if (entry.isDirectory)
+                    MaterialTheme.colorScheme.primary
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        trailingContent = {
+            IconButton(onClick = { showConfirm = true }) {
+                Icon(Icons.Default.Delete, "Delete",
+                    tint = MaterialTheme.colorScheme.error)
+            }
+        },
+        modifier = androidx.compose.ui.Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    )
+
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title   = { Text("Delete ${entry.name}?") },
+            text    = { Text("This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { onDelete(); showConfirm = false }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+// ─── build.prop Tab ──────────────────────────────────────────────────────────
+
+@Composable
+private fun BuildPropTab(
+    uiState: GsiEditorUiState,
+    vm: GsiEditorViewModel
+) {
     var searchQuery by remember { mutableStateOf("") }
-    Column {
+
+    Column(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
-            value = searchQuery,
+            value    = searchQuery,
             onValueChange = { searchQuery = it },
-            label = { Text("Search props") },
+            label    = { Text("Search props") },
             leadingIcon = { Icon(Icons.Default.Search, null) },
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             singleLine = true
         )
+
         val filtered = uiState.buildProps.entries
-            .filter { it.key.contains(searchQuery, true) || it.value.contains(searchQuery, true) }
+            .filter { it.key.contains(searchQuery, ignoreCase = true) ||
+                      it.value.contains(searchQuery, ignoreCase = true) }
+
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(filtered.toList()) { (key, value) ->
-                var editing   by remember { mutableStateOf(false) }
-                var editValue by remember(value) { mutableStateOf(value) }
-                ListItem(
-                    headlineContent = {
-                        Text(key, fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodyMedium)
-                    },
-                    supportingContent = {
-                        if (editing) {
-                            OutlinedTextField(
-                                value = editValue,
-                                onValueChange = { editValue = it },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        } else {
-                            Text(value, fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary)
-                        }
-                    },
-                    trailingContent = {
-                        if (editing) {
-                            Row {
-                                IconButton(onClick = { vm.updateBuildProp(key, editValue); editing = false }) {
-                                    Icon(Icons.Default.Check, null,
-                                        tint = MaterialTheme.colorScheme.primary)
-                                }
-                                IconButton(onClick = { editValue = value; editing = false }) {
-                                    Icon(Icons.Default.Close, null)
-                                }
-                            }
-                        } else {
-                            IconButton(onClick = { editing = true }) {
-                                Icon(Icons.Default.Edit, null)
-                            }
-                        }
-                    }
-                )
-                HorizontalDivider()
+                BuildPropRow(propKey = key, propValue = value,
+                    onValueChange = { vm.updateBuildProp(key, it) })
             }
         }
+
         Button(
-            onClick = vm::saveBuildProps,
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
+            onClick  = vm::saveBuildProps,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
         ) {
             Icon(Icons.Default.Save, null)
             Spacer(Modifier.width(8.dp))
@@ -366,6 +438,56 @@ private fun BuildPropTab(uiState: GsiEditorUiState, vm: GsiEditorViewModel) {
         }
     }
 }
+
+@Composable
+private fun BuildPropRow(
+    propKey: String,
+    propValue: String,
+    onValueChange: (String) -> Unit
+) {
+    var editing by remember { mutableStateOf(false) }
+    var editValue by remember(propValue) { mutableStateOf(propValue) }
+
+    ListItem(
+        headlineContent = {
+            Text(propKey, style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace)
+        },
+        supportingContent = {
+            if (editing) {
+                OutlinedTextField(
+                    value    = editValue,
+                    onValueChange = { editValue = it },
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth()
+                )
+            } else {
+                Text(propValue, style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+        },
+        trailingContent = {
+            if (editing) {
+                Row {
+                    IconButton(onClick = { onValueChange(editValue); editing = false }) {
+                        Icon(Icons.Default.Check, "Save", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = { editValue = propValue; editing = false }) {
+                        Icon(Icons.Default.Close, "Cancel")
+                    }
+                }
+            } else {
+                IconButton(onClick = { editing = true }) {
+                    Icon(Icons.Default.Edit, "Edit")
+                }
+            }
+        }
+    )
+    HorizontalDivider()
+}
+
+// ─── Magisk Tab ──────────────────────────────────────────────────────────────
 
 @Composable
 private fun MagiskTab(
@@ -405,6 +527,8 @@ private fun MagiskTab(
     }
 }
 
+// ─── Repack Section ──────────────────────────────────────────────────────────
+
 @Composable
 private fun RepackSection(
     uiState: GsiEditorUiState,
@@ -417,25 +541,38 @@ private fun RepackSection(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Repack Options", style = MaterialTheme.typography.titleMedium)
+
         OutlinedTextField(
-            value = uiState.outputFileName,
+            value  = uiState.outputFileName,
             onValueChange = vm::setOutputFileName,
-            label = { Text("Output filename") },
+            label  = { Text("Output filename (no extension)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
+
         Text("Output format:")
-        GsiRepackUseCase.OutputFormat.values().forEach { fmt ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = uiState.outputFormat == fmt,
-                    onClick = { vm.setOutputFormat(fmt) })
+        val formats = GsiRepackUseCase.OutputFormat.values()
+        formats.forEach { fmt ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                RadioButton(
+                    selected = uiState.outputFormat == fmt,
+                    onClick  = { vm.setOutputFormat(fmt) }
+                )
                 Text(fmt.name)
             }
         }
+
         if (uiState.isOperationRunning) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else {
-            Button(onClick = vm::startRepack, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick  = vm::startRepack,
+                enabled  = !uiState.isOperationRunning,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Icon(Icons.Default.Archive, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Start Repack")
@@ -444,28 +581,33 @@ private fun RepackSection(
     }
 }
 
+// ─── Done Section ────────────────────────────────────────────────────────────
+
 @Composable
-private fun DoneSection(uiState: GsiEditorUiState, onStartOver: () -> Unit) {
+private fun DoneSection(
+    uiState: GsiEditorUiState,
+    onStartOver: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(32.dp),
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Icon(Icons.Default.CheckCircle, null,
-            modifier = Modifier.size(72.dp),
+        Icon(Icons.Default.CheckCircle,
+            null, modifier = Modifier.size(72.dp),
             tint = MaterialTheme.colorScheme.primary)
         Text("Repack Complete!", style = MaterialTheme.typography.headlineSmall)
         uiState.outputFile?.let { f ->
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(f.name, style = MaterialTheme.typography.titleMedium)
-                    Text(f.absolutePath, fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(StorageHelper.formatSize(f.length()))
+                    Text(f.absolutePath, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace)
+                    Text(StorageHelper.formatSize(f.length()),
+                        style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
@@ -475,33 +617,41 @@ private fun DoneSection(uiState: GsiEditorUiState, onStartOver: () -> Unit) {
     }
 }
 
+// ─── Shared Components ───────────────────────────────────────────────────────
+
 @Composable
 private fun StepIndicator(currentStep: EditorStep) {
+    val steps = EditorStep.values()
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        EditorStep.values().forEach { step ->
-            val isActive = step == currentStep
-            val isPassed = step.ordinal < currentStep.ordinal
+        steps.forEach { step ->
+            val isActive  = step == currentStep
+            val isPassed  = step.ordinal < currentStep.ordinal
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(28.dp).background(
-                        if (isActive || isPassed) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        CircleShape
-                    )
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(
+                            if (isActive || isPassed) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = androidx.compose.foundation.shape.CircleShape
+                        )
                 ) {
-                    if (isPassed)
+                    if (isPassed) {
                         Icon(Icons.Default.Check, null,
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(16.dp))
-                    else
+                    } else {
                         Text("${step.ordinal + 1}",
                             color = if (isActive) MaterialTheme.colorScheme.onPrimary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelSmall)
+                    }
                 }
                 Text(step.name.lowercase().replaceFirstChar { it.uppercaseChar() },
                     style = MaterialTheme.typography.labelSmall,
@@ -549,21 +699,32 @@ private fun InfoRow(label: String, value: String) {
 @Composable
 private fun LogPanel(logLines: List<LogLine>) {
     val listState = rememberLazyListState()
+
+    // Auto-scroll to bottom
     LaunchedEffect(logLines.size) {
-        if (logLines.isNotEmpty()) listState.animateScrollToItem(logLines.size - 1)
+        if (logLines.isNotEmpty())
+            listState.animateScrollToItem(logLines.size - 1)
     }
+
     Surface(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 200.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 120.dp, max = 200.dp),
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
-        LazyColumn(state = listState, modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        LazyColumn(
+            state    = listState,
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             items(logLines) { line ->
-                Text("[${line.tag}] ${line.message}",
-                    style = MaterialTheme.typography.bodySmall,
+                Text(
+                    "[${line.tag}] ${line.message}",
+                    style      = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
-                    color = if (line.isError) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant)
+                    color      = if (line.isError) MaterialTheme.colorScheme.error
+                                 else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
