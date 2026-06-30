@@ -20,3 +20,4 @@ ij_kotlin_align_multiline_parameters = false
 ij_continuation_indent_size = 4
 ij_kotlin_import_nested_classes = false
 ij_kotlin_imports_layout = *,^
+ktlint_standard_no-wildcard-imports = disabled
